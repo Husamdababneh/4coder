@@ -2077,5 +2077,298 @@ CUSTOM_DOC("Notes the external modification of attached files by printing a mess
     }
 }
 
+/////////////////////////////////////////////////
+/////// Commands taken from 4coder_fleury ///////
+/////////////////////////////////////////////////
+
+
+function i64
+F4_Boundary_TokenAndWhitespace(Application_Links *app, Buffer_ID buffer, 
+                               Side side, Scan_Direction direction, i64 pos)
+{
+    i64 result = boundary_non_whitespace(app, buffer, side, direction, pos);
+    Token_Array tokens = get_token_array_from_buffer(app, buffer);
+    if (tokens.tokens != 0){
+        switch (direction){
+            case Scan_Forward:
+            {
+                i64 buffer_size = buffer_get_size(app, buffer);
+                result = buffer_size;
+                if(tokens.count > 0)
+                {
+                    Token_Iterator_Array it = token_iterator_pos(0, &tokens, pos);
+                    Token *token = token_it_read(&it);
+                    
+                    if(token == 0)
+                    {
+                        break;
+                    }
+                    
+                    // NOTE(rjf): Comments/Strings
+                    if(token->kind == TokenBaseKind_Comment ||
+                       token->kind == TokenBaseKind_LiteralString)
+                    {
+                        result = boundary_non_whitespace(app, buffer, side, direction, pos);
+                        break;
+                    }
+                    
+                    // NOTE(rjf): All other cases.
+                    else
+                    {
+                        if (token->kind == TokenBaseKind_Whitespace)
+                        {
+                            // token_it_inc_non_whitespace(&it);
+                            // token = token_it_read(&it);
+                        }
+                        
+                        if (side == Side_Max){
+                            result = token->pos + token->size;
+                            
+                            token_it_inc_all(&it);
+                            Token *ws = token_it_read(&it);
+                            if(ws != 0 && ws->kind == TokenBaseKind_Whitespace &&
+                               get_line_number_from_pos(app, buffer, ws->pos + ws->size) ==
+                               get_line_number_from_pos(app, buffer, token->pos))
+                            {
+                                result = ws->pos + ws->size;
+                            }
+                        }
+                        else{
+                            if (token->pos <= pos){
+                                token_it_inc_non_whitespace(&it);
+                                token = token_it_read(&it);
+                            }
+                            if (token != 0){
+                                result = token->pos;
+                            }
+                        }
+                    }
+                    
+                }
+            }break;
+            
+            case Scan_Backward:
+            {
+                result = 0;
+                if (tokens.count > 0){
+                    Token_Iterator_Array it = token_iterator_pos(0, &tokens, pos);
+                    Token *token = token_it_read(&it);
+                    
+                    Token_Iterator_Array it2 = it;
+                    token_it_dec_non_whitespace(&it2);
+                    Token *token2 = token_it_read(&it2);
+                    
+                    // NOTE(rjf): Comments/Strings
+                    if(token->kind == TokenBaseKind_Comment ||
+                       token->kind == TokenBaseKind_LiteralString ||
+                       (token2 && 
+                        token2->kind == TokenBaseKind_Comment ||
+                        token2->kind == TokenBaseKind_LiteralString))
+                    {
+                        result = boundary_non_whitespace(app, buffer, side, direction, pos);
+                        break;
+                    }
+                    
+                    if (token->kind == TokenBaseKind_Whitespace){
+                        token_it_dec_non_whitespace(&it);
+                        token = token_it_read(&it);
+                    }
+                    if (token != 0){
+                        if (side == Side_Min){
+                            if (token->pos >= pos){
+                                token_it_dec_non_whitespace(&it);
+                                token = token_it_read(&it);
+                            }
+                            result = token->pos;
+                        }
+                        else{
+                            if (token->pos + token->size >= pos){
+                                token_it_dec_non_whitespace(&it);
+                                token = token_it_read(&it);
+                            }
+                            result = token->pos + token->size;
+                        }
+                    }
+                }
+            }break;
+        }
+    }
+    return(result);
+}
+
+CUSTOM_COMMAND_SIG(f4_move_right_token_boundary)
+CUSTOM_DOC("Seek right for boundary between alphanumeric characters and non-alphanumeric characters.")
+{
+    Scratch_Block scratch(app);
+    current_view_scan_move(app, Scan_Forward, push_boundary_list(scratch, F4_Boundary_TokenAndWhitespace));
+}
+
+CUSTOM_COMMAND_SIG(f4_move_left_token_boundary)
+CUSTOM_DOC("Seek left for boundary between alphanumeric characters and non-alphanumeric characters.")
+{
+    Scratch_Block scratch(app);
+    current_view_scan_move(app, Scan_Backward, push_boundary_list(scratch, F4_Boundary_TokenAndWhitespace));
+}
+
+internal void
+F4_Search(Application_Links *app, Scan_Direction dir)
+{
+    Scratch_Block scratch(app);
+    View_ID view = get_active_view(app, Access_Read);
+    Buffer_ID buffer = view_get_buffer(app, view, Access_Read);
+    if(view && buffer)
+    {
+        i64 cursor = view_get_cursor_pos(app, view);
+        i64 mark = view_get_mark_pos(app, view);
+        i64 cursor_line = get_line_number_from_pos(app, buffer, cursor);
+        i64 mark_line = get_line_number_from_pos(app, buffer, mark);
+        String_Const_u8 query_init = (fcoder_mode != FCoderMode_NotepadLike || cursor == mark || cursor_line != mark_line) ? SCu8() : push_buffer_range(app, scratch, buffer, Ii64(cursor, mark));
+        isearch(app, dir, cursor, query_init);
+    }
+}
+
+CUSTOM_COMMAND_SIG(f4_search)
+CUSTOM_DOC("Searches the current buffer forward. If something is highlighted, will fill search query with it.")
+{
+    F4_Search(app, Scan_Forward);
+}
+
+CUSTOM_COMMAND_SIG(f4_reverse_search)
+CUSTOM_DOC("Searches the current buffer backwards. If something is highlighted, will fill search query with it.")
+{
+    F4_Search(app, Scan_Backward);
+}
+
+CUSTOM_COMMAND_SIG(f4_home)
+CUSTOM_DOC("Goes to the beginning of the line.")
+{
+    seek_pos_of_visual_line(app, Side_Min);
+    View_ID view = get_active_view(app, Access_ReadWriteVisible);
+    Buffer_Scroll scroll = view_get_buffer_scroll(app, view);
+    scroll.target.pixel_shift.x = 0;
+    view_set_buffer_scroll(app, view, scroll, SetBufferScroll_NoCursorChange);
+}
+
+CUSTOM_COMMAND_SIG(f4_home_first_non_whitespace)
+CUSTOM_DOC("Goes to the beginning of the line.")
+{
+    View_ID view = get_active_view(app, Access_Read);
+    Buffer_ID buffer = view_get_buffer(app, view, Access_Read);
+    if(view && buffer)
+    {
+        i64 start_pos = view_get_cursor_pos(app, view);
+        seek_pos_of_visual_line(app, Side_Min);
+        i64 end_pos = view_get_cursor_pos(app, view);
+        i64 line = get_line_number_from_pos(app, buffer, start_pos);
+        
+        // NOTE(rjf): If we are on the first column, go to the first non-whitespace
+        // in the line.
+        if(start_pos == end_pos && start_pos == get_line_start_pos(app, buffer, line))
+        {
+            Scratch_Block scratch(app);
+            String_Const_u8 string = push_buffer_line(app, scratch, buffer, line);
+            for(u64 i = 0; i < string.size; i += 1)
+            {
+                if(!character_is_whitespace(string.str[i]))
+                {
+                    view_set_cursor_by_character_delta(app, view, (i64)i);
+                    break;
+                }
+            }
+        }
+        
+        // NOTE(rjf): If we hit any non-whitespace, move to the first possible
+        // non-whitespace instead of the front of the line entirely.
+        else 
+        {
+            Scratch_Block scratch(app);
+            String_Const_u8 string = push_buffer_range(app, scratch, buffer, Ii64(start_pos, end_pos));
+            
+            b32 skipped_non_whitespace = 0;
+            {
+                for(i64 i = string.size-1; i >= 0; i -= 1)
+                {
+                    if(!character_is_whitespace(string.str[i]))
+                    {
+                        skipped_non_whitespace = 1;
+                        break;
+                    }
+                }
+            }
+            
+            if(skipped_non_whitespace)
+            {
+                for(i64 i = 0; i < (i64)string.size; i += 1)
+                {
+                    if(!character_is_whitespace(string.str[i]))
+                    {
+                        view_set_cursor_by_character_delta(app, view, i);
+                        break;
+                    }
+                }
+            }
+        }
+        
+        // NOTE(rjf): Scroll all the way left.
+        {
+            Buffer_Scroll scroll = view_get_buffer_scroll(app, view);
+            scroll.target.pixel_shift.x = 0;
+            view_set_buffer_scroll(app, view, scroll, SetBufferScroll_NoCursorChange);
+        }
+    }
+}
+
+
+/////////////////////////////////////////////////
+///////        Custom Commands            ///////
+/////////////////////////////////////////////////
+
+CUSTOM_COMMAND_SIG(open_in_popup)
+CUSTOM_DOC("Opens a popup that contains all active buffers to switch to.")
+{
+    Scratch_Block scratch(app);
+    String_Const_u8 str = push_u8_stringf(scratch, "Hello From custom command\n");
+    print_message(app, str);
+    //change_active_panel_send_command(app, interactive_open_or_new);
+}
+
+CUSTOM_COMMAND_SIG(clear_messages_buffer)
+CUSTOM_DOC("Cleans the *messages* buffer")
+{
+    // TODO(husamd): Fetch the *<buffer>* buffers and let me choose which one to clear
+    Buffer_ID buffer =  get_buffer_by_name(app, string_u8_litexpr("*messages*"), Access_Always);
+
+    i64 bufferSize = buffer_get_size(app,
+                                     buffer);
+
+    Range_i64 range = {0, bufferSize};
+    buffer_replace_range(app,
+                         buffer,
+                         range,
+                         string_u8_litexpr(""));
+}
+
+global b32 global_popup_window_show = 0;
+CUSTOM_COMMAND_SIG(hd_popup)
+CUSTOM_DOC("Toggles popup window.")
+{
+    global_popup_window_show ^= 1;
+}
+
+/*
+#include "./4coder_fleury/4coder_fleury_ubiquitous.h"
+#include "./4coder_fleury/4coder_fleury_ubiquitous.cpp"
+#include "./4coder_fleury/4coder_fleury_render_helpers.h"
+#include "./4coder_fleury/4coder_fleury_render_helpers.cpp"
+
+#if 0
+ #include "./4coder_fleury/4coder_fleury_colors.h"
+ #include "./4coder_fleury/4coder_fleury_colors.cpp"
+#endif 
+
+#include "./4coder_fleury/4coder_fleury_code_peek.cpp"
+*/
+
+
 // BOTTOM
 
