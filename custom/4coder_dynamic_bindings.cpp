@@ -115,10 +115,20 @@ dynamic_binding_load_from_file(Application_Links *app, Mapping *mapping, String_
                                     map_set_binding(mapping, map, command->proc, InputEventKind_KeyStroke, keycode, &mods_set);
                                 }
                                 else{
-                                    def_config_push_error(scratch, parsed, node->result.pos,
-                                                          (keycode != 0) ? (char*)"Invalid command" :
-                                                          (command != 0) ? (char*)"Invalid key":
-                                                          (char*)"Invalid command and key");
+                                    /*
+                                    char* message =
+                                        (keycode != 0) ? (char*)"Invalid command" :
+                                        (command != 0) ? (char*)"Invalid key":
+                                        (char*)"Invalid command and key";*/
+
+                                    String_Const_u8 message = push_stringf(scratch,
+                                                                           "Invalid command or key [%s]",
+                                                                           cmd_string.str);
+                                    
+                                    def_config_push_error(scratch,
+                                                          parsed,
+                                                          node->result.pos,
+                                                          (char*)message.str);
                                 }
                             }
                             
