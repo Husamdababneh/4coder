@@ -7,3 +7,4 @@ build.ilk
 build.exe
 4ed_app_target.obj
 4ed_app.dll
+./custom/generated/**.h
